@@ -84,7 +84,7 @@
   <button id="btn-voz">🎙 Começar com a voz</button>
   <button id="btn-auto" class="sec">▶ Rolagem automática (sem voz)</button>
   <button id="btn-trocar" class="sec" style="display:none">☰ Outro roteiro</button>
-  <label id="opcoes"><input id="op-vocab" type="checkbox" style="width:18px;height:18px"> Ouvir só as palavras do roteiro (teste se o lugar for barulhento)</label>
+  <label id="opcoes"><input id="op-vocab" type="checkbox" style="width:18px;height:18px"> Voz leve: ouvir só as palavras do roteiro (mais rápida no tablet)</label>
   <div id="estado"></div>
   <button id="btn-atualizar" class="sec">🔄 Buscar roteiros novos</button>
   <p style="font-size:13px;color:#777">Teclado, passador de slides ou controle Bluetooth (a tecla recebida aparece no canto de cima): <kbd>espaço</kbd> ou <kbd>Enter</kbd> pausa · <kbd>←</kbd>/<kbd>→</kbd> ou <kbd>PgUp</kbd>/<kbd>PgDn</kbd> frase anterior/próxima · <kbd>↑</kbd>/<kbd>↓</kbd> velocidade · <kbd>M</kbd> espelho · <kbd>+</kbd>/<kbd>−</kbd> letra. Gravando, toque: lado esquerdo volta, lado direito avança, meio pausa. Parado: role livre e toque numa frase para começar dali.</p>
@@ -173,7 +173,7 @@ function montar() {
 // ---------- estado ----------
 const guardado = (() => { try { return JSON.parse(localStorage.getItem('tp-cfg') || '{}'); } catch (_) { return {}; } })();
 const fontePadrao = Math.round(Math.min(72, Math.max(32, window.innerWidth / 17))); // ~8 a 10 palavras por linha no tablet deitado
-const cfg = Object.assign({ fonte: fontePadrao, espelho: false, linha: 12, ppm: 154, vocab: false }, guardado);
+const cfg = Object.assign({ fonte: fontePadrao, espelho: false, linha: 12, ppm: 154, vozLeve: true }, guardado);
 let pos = 0;              // próxima palavra a ser falada
 let modo = 'voz';
 let rodando = false;
@@ -183,17 +183,17 @@ function aplicarCfg() {
   document.body.classList.toggle('espelho', !!cfg.espelho);
   document.documentElement.style.setProperty('--guia', cfg.linha + 'vh');
   $('b-fonte').value = cfg.fonte; $('b-linha').value = cfg.linha; $('b-ppm').value = cfg.ppm; $('ppm-v').textContent = cfg.ppm + ' ppm';
-  $('op-vocab').checked = !!cfg.vocab;
+  $('op-vocab').checked = !!cfg.vozLeve;
 }
 aplicarCfg();
-$('op-vocab').onchange = (e) => { cfg.vocab = e.target.checked; salvar(); };
+$('op-vocab').onchange = (e) => { cfg.vozLeve = e.target.checked; salvar(); };
 
 // ---------- desenho e rolagem ----------
 let marcado = -1;
 // Adianto: o reconhecimento chega com algum atraso; entre um reconhecimento e outro o texto
 // avança sozinho no ritmo do Victor (sem passar do fim da frase).
 let adianto = 0, ultimoCasamento = 0;
-const ADIANTO_MAX = 8;
+const ADIANTO_MAX = 12;
 function posExibida() { return Math.min(palavras.length, pos + adianto); }
 function pintar() {
   const ate = posExibida();
@@ -222,8 +222,28 @@ let puxar = true; // false quando o Victor rola com o dedo fora da gravação
   requestAnimationFrame(animar);
 })();
 ['wheel', 'touchmove'].forEach((ev) => palco.addEventListener(ev, () => { if (!rodando) puxar = false; }, { passive: true }));
+// Ritmo medido na fala (palavras por minuto nos últimos ~10 s). Fala mais rápido, o texto anda mais rápido.
+let ritmo = 0;
+const historico = []; // {t, p}
+function registrarRitmo(p) {
+  const t = performance.now();
+  historico.push({ t, p });
+  while (historico.length > 1 && t - historico[0].t > 10000) historico.shift();
+  const a = historico[0];
+  if (t - a.t > 2500 && p > a.p) {
+    const r = (p - a.p) / ((t - a.t) / 60000);
+    if (r > 60 && r < 320) ritmo = ritmo ? ritmo * 0.6 + r * 0.4 : r;
+  }
+}
+const ritmoAtual = () => Math.max(100, Math.min(260, ritmo || cfg.ppm));
+// quantas palavras mostrar à frente do último reconhecimento: o que foi dito durante o atraso + o tempo desde então
+function aFrente(dt) {
+  if (pos >= palavras.length) return 0;
+  const fimFrase = inicioFrase[palavras[pos].frase + 1] ?? palavras.length;
+  return Math.max(0, Math.min(ADIANTO_MAX, fimFrase - pos, Math.floor(((dt + atrasoVoz) * ritmoAtual()) / 60)));
+}
 function irPara(i, aviso) {
-  if (aviso) { adianto = 0; ultimoCasamento = 0; }
+  if (aviso) { adianto = 0; ultimoCasamento = 0; historico.length = 0; }
   pos = Math.max(0, Math.min(i, palavras.length));
   pintar(); mirar();
   if (aviso) mostrarAviso(aviso);
@@ -245,9 +265,7 @@ function passoAuto(t) {
   if (modo === 'voz' && rodando && ultimoCasamento && pos < palavras.length) {
     const dt = (t - ultimoCasamento) / 1000;
     if (dt < 3) {
-      const f = palavras[pos].frase;
-      const fimFrase = inicioFrase[f + 1] ?? palavras.length;
-      const alvo = Math.min(ADIANTO_MAX, fimFrase - pos, 1 + Math.floor((dt * cfg.ppm) / 60));
+      const alvo = aFrente(dt);
       if (alvo > adianto) { adianto = alvo; pintar(); mirar(); }
     }
   }
@@ -319,7 +337,8 @@ function processarOuvido(lista) {
   if (j >= 0 && j + 1 > pos - 4) {
     const visivel = posExibida();
     pos = Math.max(0, Math.min(j + 1, palavras.length));
-    adianto = Math.max(0, Math.min(ADIANTO_MAX, visivel - pos));
+    registrarRitmo(pos);
+    adianto = Math.max(aFrente(0), Math.min(ADIANTO_MAX, visivel - pos)); // não volta o que já foi mostrado
     ultimoCasamento = performance.now();
     pintar(); mirar();
   }
@@ -362,14 +381,45 @@ function vocabulario() {
   return [...set];
 }
 function criarReconhecedor(modelo, taxa) {
-  if (cfg.vocab) {
+  if (cfg.vozLeve) {
     try { return new modelo.KaldiRecognizer(taxa, JSON.stringify(vocabulario())); } catch (_) {}
   }
   return new modelo.KaldiRecognizer(taxa);
 }
+// O motor trabalha em 16 kHz. O microfone chega em 48 kHz: reduzir aqui poupa o motor (que fazia isso
+// sozinho, mais devagar).
+const TAXA = 16000;
+function reamostrar(x, de) {
+  if (de === TAXA) return new Float32Array(x);
+  const razao = de / TAXA, n = Math.floor(x.length / razao), y = new Float32Array(n);
+  for (let i = 0; i < n; i++) { // média de cada janela: filtro simples contra chiado
+    const a = Math.floor(i * razao), b = Math.min(x.length, Math.floor((i + 1) * razao));
+    let s = 0; for (let k = a; k < b; k++) s += x[k];
+    y[i] = s / Math.max(1, b - a);
+  }
+  return y;
+}
+// Fila: cada pedaço de áudio enviado volta como uma resposta. Se o tablet não der conta, a fila cresce e o
+// texto fica cada vez mais para trás. Passou de 1,5 s de fila: pula um trecho inteiro até o motor alcançar
+// (pular pedacinho sim, pedacinho não picota as palavras e o reconhecimento se perde).
+const FILA_MAX = 1.5, FILA_VOLTA = 0.3;
+let vEnv = 0, vResp = 0, vDescartados = 0, atrasoVoz = 0.4, pulando = false, avisouLento = false;
+function enviarAudio(rec, pedaco) {
+  const fila = (vEnv - vResp) * (pedaco.length / TAXA);
+  atrasoVoz = 0.35 + Math.max(0, fila); // ~0,35 s é o atraso próprio do reconhecimento
+  if (!pulando && fila > FILA_MAX) pulando = true;
+  else if (pulando && fila < FILA_VOLTA) pulando = false;
+  if (pulando) {
+    vDescartados++;
+    if (!avisouLento && !cfg.vozLeve) { avisouLento = true; mostrarAviso('Tablet no limite: ligue a "Voz leve" na tela inicial', 4000); }
+    return;
+  }
+  vEnv++;
+  try { rec.acceptWaveformFloat(pedaco, TAXA); } catch (_) { vEnv--; }
+}
 function ouvirVosk() {
   const lista = vFinais.concat(vParcial).slice(vDescartar);
-  $('ouvido').textContent = lista.slice(-8).join(' ');
+  $('ouvido').textContent = lista.slice(-8).join(' ') + `  · ${atrasoVoz.toFixed(1)} s${vDescartados ? ' ⚠' : ''}`;
   const r = processarOuvido(lista);
   if (r.comando) vDescartar += r.cortarAte;
 }
@@ -392,9 +442,10 @@ async function iniciarVoz() {
   let modelo;
   try { modelo = await carregarVoz(); } catch (e) { if (sessao === vSessao) semVoz('A voz não carregou (' + vErro + ')'); return; }
   if (sessao !== vSessao || !rodando || modo !== 'voz') return;
-  const rec = criarReconhecedor(modelo, vCtx.sampleRate);
-  vRec = rec;
+  const rec = criarReconhecedor(modelo, TAXA);
+  vRec = rec; vEnv = 0; vResp = 0; vDescartados = 0; atrasoVoz = 0.4; pulando = false;
   rec.on('result', (m) => {
+    vResp++;
     if (rec !== vRec) return;
     const t = (m.result && m.result.text) || '';
     if (t) vFinais = vFinais.concat(tokens(t));
@@ -402,6 +453,7 @@ async function iniciarVoz() {
     ouvirVosk();
   });
   rec.on('partialresult', (m) => {
+    vResp++;
     if (rec !== vRec) return;
     const novo = tokens((m.result && m.result.partial) || '');
     if (novo.join(' ') === vParcial.join(' ')) return;
@@ -410,7 +462,7 @@ async function iniciarVoz() {
   });
   const fonte = vCtx.createMediaStreamSource(vStream);
   vNode = vCtx.createScriptProcessor(4096, 1, 1);
-  vNode.onaudioprocess = (ev) => { if (vRec === rec) { try { rec.acceptWaveform(ev.inputBuffer); } catch (_) {} } };
+  vNode.onaudioprocess = (ev) => { if (vRec === rec) enviarAudio(rec, reamostrar(ev.inputBuffer.getChannelData(0), vCtx.sampleRate)); };
   fonte.connect(vNode); vNode.connect(vCtx.destination);
   reconhecendo = true;
   status('🎙 ouvindo');
