@@ -651,6 +651,9 @@ $('chave-ok').onclick = async () => {
 $('chave').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('chave-ok').click(); });
 
 function brData(s) { return s ? s.slice(0, 10).split('-').reverse().join('/') : '—'; }
+// roteiros já gravados: {codigo: 'AAAA-MM-DD'}, guardado no próprio aparelho
+const lerGravados = () => { try { return JSON.parse(localStorage.getItem('tp-gravados') || '{}'); } catch (_) { return {}; } };
+const salvarGravados = (g) => { try { localStorage.setItem('tp-gravados', JSON.stringify(g)); } catch (_) {} };
 function mostrarLista() {
   ROTEIRO = null;
   $('btn-voz').style.display = 'none'; $('btn-auto').style.display = 'none'; $('btn-ler').style.display = 'none'; $('btn-trocar').style.display = 'none';
@@ -660,20 +663,42 @@ function mostrarLista() {
   lista.innerHTML = '';
   const cab = document.createElement('p');
   cab.style.cssText = 'margin:.4rem 0 .2rem;font-size:14px;opacity:.7;text-transform:uppercase;letter-spacing:.05em';
-  cab.textContent = 'Ordem de gravação';
+  cab.textContent = 'Ordem de gravação (marque “Gravado” quando gravar)';
   lista.appendChild(cab);
+  const gravados = lerGravados();
   PACOTE.roteiros.forEach((item, n) => {
+    const linha = document.createElement('div');
+    linha.style.cssText = 'display:flex;gap:.6rem;align-items:center';
     const b = document.createElement('button');
     b.className = 'sec';
-    b.style.cssText = 'text-align:left;font-size:17px;padding:.8rem 1rem';
-    b.textContent = `${n + 1}. ${item.titulo}  ·  ~${item.minutos} min`;
+    b.style.cssText = 'flex:1;text-align:left;font-size:17px;padding:.8rem 1rem';
+    const pinta = () => {
+      b.textContent = `${gravados[item.codigo] ? '✓ ' : ''}${n + 1}. ${item.titulo}  ·  ~${item.minutos} min`;
+      b.style.opacity = gravados[item.codigo] ? '.55' : '';
+      data.textContent = gravados[item.codigo] ? brData(gravados[item.codigo]) : '';
+    };
     b.onclick = () => {
       ROTEIRO = item.roteiro;
       lista.innerHTML = '';
       $('btn-trocar').style.display = '';
       prontoParaGravar();
     };
-    lista.appendChild(b);
+    const lab = document.createElement('label');
+    lab.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:.1rem;font-size:14px;white-space:nowrap;cursor:pointer;min-width:5.5em;color:#ccc';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.style.cssText = 'width:24px;height:24px';
+    cb.checked = !!gravados[item.codigo];
+    const data = document.createElement('span');
+    data.style.cssText = 'font-size:12px;color:#888';
+    cb.onchange = () => {
+      if (cb.checked) gravados[item.codigo] = new Date().toISOString().slice(0, 10); else delete gravados[item.codigo];
+      salvarGravados(gravados); pinta();
+    };
+    lab.append(cb, document.createTextNode('Gravado'), data);
+    linha.append(b, lab);
+    lista.appendChild(linha);
+    pinta();
   });
   if (!PACOTE.roteiros.length) lista.innerHTML = '<p>Nenhum roteiro ainda.</p>';
   estado();
