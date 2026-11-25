@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="robots" content="noindex, nofollow">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icone-192.png">
+<title>Teleprompter AgroSyntese</title>
+<style>
+  :root { --fonte: 56px; --linha: 1.45; --guia: 33vh; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; -webkit-user-select: none; user-select: none; }
+  #palco { position: fixed; inset: 0; overflow-y: scroll; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  #palco::-webkit-scrollbar { display: none; }
+  body.espelho #texto { transform: scaleX(-1); }
+  #texto { padding: var(--guia) 7vw 80vh; font-size: var(--fonte); line-height: var(--linha); font-weight: 600; }
+  .bloco { font-size: .38em; letter-spacing: .12em; text-transform: uppercase; color: #5fb3a8; margin: 1.6em 0 .4em; font-weight: 700; }
+  .par { margin: 0 0 .9em; }
+  .pers { display: inline-block; font-size: .42em; vertical-align: middle; background: #c99a2e; color: #000; border-radius: .4em; padding: .1em .5em; margin-right: .4em; font-weight: 800; }
+  .par.personagem .w { color: #ffd77a; }
+  .w { transition: color .15s; }
+  .w.lido { color: #6b6b6b; }
+  .par.personagem .w.lido { color: #7a6a3e; }
+  .w.atual { color: #fff; text-decoration: underline; text-decoration-color: #7cb342; text-decoration-thickness: .08em; text-underline-offset: .15em; }
+  #guia { position: fixed; left: 0; right: 0; top: calc(var(--guia) - .2em); height: calc(var(--fonte) * var(--linha) + .4em); border-top: 2px solid rgba(124,179,66,.35); border-bottom: 2px solid rgba(124,179,66,.35); pointer-events: none; }
+  #barra { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; padding: .6rem .8rem calc(.6rem + env(safe-area-inset-bottom)); background: rgba(20,20,20,.92); font-size: 15px; transition: opacity .4s; z-index: 5; }
+  body.gravando #barra { opacity: .08; }
+  body.gravando #barra:hover, body.gravando #barra:focus-within { opacity: 1; }
+  #barra button, #barra select { background: #2a2a2a; color: #fff; border: 1px solid #444; border-radius: 8px; padding: .55rem .8rem; font-size: 15px; }
+  #barra button.principal { background: #2e7d32; border-color: #2e7d32; font-weight: 700; }
+  #barra label { display: flex; align-items: center; gap: .35rem; color: #bbb; }
+  #barra input[type=range] { width: 110px; }
+  #status { margin-left: auto; color: #9ccc65; min-width: 12ch; text-align: right; }
+  #status.erro { color: #ff8a65; }
+  #aviso { position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); max-width: 92vw; text-align: center; background: #c99a2e; color: #000; font-weight: 800; padding: .5rem 1.2rem; border-radius: 999px; font-size: 22px; opacity: 0; transition: opacity .25s; z-index: 6; pointer-events: none; }
+  #aviso.ver { opacity: 1; }
+  #ouvido { position: fixed; top: .6rem; right: .8rem; color: #555; font-size: 14px; max-width: 45vw; text-align: right; z-index: 4; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
+  #tela-inicio { position: fixed; inset: 0; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 1rem; z-index: 10; padding: 2rem; text-align: center; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y; }
+  #tela-inicio h1 { font-size: 28px; margin: 0; }
+  #tela-inicio p { color: #aaa; max-width: 640px; line-height: 1.5; margin: 0; font-size: 16px; }
+  #tela-inicio button { font-size: 20px; padding: 1rem 2rem; border-radius: 12px; border: 0; background: #2e7d32; color: #fff; font-weight: 800; }
+  #tela-inicio .sec { background: #333; font-size: 16px; padding: .7rem 1.2rem; }
+  #tela-inicio button:disabled { opacity: .4; }
+  #estado { display: flex; flex-direction: column; gap: .25rem; font-size: 14px; color: #888; max-width: 640px; }
+  #estado .ok { color: #9ccc65; } #estado .alerta { color: #ffb74d; }
+  #chave-box { display: none; flex-direction: column; gap: .7rem; align-items: center; width: min(420px, 100%); }
+  #chave-box input { width: 100%; font-size: 22px; padding: .8rem 1rem; border-radius: 10px; border: 1px solid #555; background: #111; color: #fff; text-align: center; -webkit-user-select: text; user-select: text; }
+  #opcoes { font-size: 14px; color: #999; display: flex; gap: .4rem; align-items: center; }
+  kbd { background: #222; border: 1px solid #444; border-radius: 4px; padding: 0 .3em; }
+</style>
+</head>
+<body>
+<div id="palco"><div id="texto"></div></div>
+<div id="guia"></div>
+<div id="aviso"></div>
+<div id="semvoz" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9;align-items:center;justify-content:center;padding:1.5rem">
+  <div style="background:#1d1d1d;border:1px solid #444;border-radius:14px;max-width:560px;padding:1.4rem;font-size:17px;line-height:1.5">
+    <b style="font-size:20px">🎙 A voz não começou</b>
+    <p id="semvoz-motivo" style="color:#ccc"></p>
+    <p style="color:#ccc">Confira se o microfone está liberado para o app (Configurações do Android → Apps → Teleprompter → Permissões). Enquanto isso, dá para usar a rolagem automática.</p>
+    <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem">
+      <button id="semvoz-tentar" style="background:#2e7d32;color:#fff;border:0;border-radius:10px;padding:.8rem 1.1rem;font-size:16px;font-weight:700">🎙 Tentar a voz de novo</button>
+      <button id="semvoz-auto" style="background:#2e7d32;color:#fff;border:0;border-radius:10px;padding:.8rem 1.1rem;font-size:16px;font-weight:700">▶ Usar rolagem automática</button>
+      <button id="semvoz-fechar" style="background:#333;color:#fff;border:1px solid #555;border-radius:10px;padding:.8rem 1.1rem;font-size:16px">Fechar</button>
+    </div>
+  </div>
+</div>
+<div id="ouvido"></div>
+
+<div id="tela-inicio">
+  <h1 id="titulo-inicio">Teleprompter AgroSyntese</h1>
+  <div id="chave-box">
+    <p>Primeira vez neste aparelho: digite a senha dos roteiros. Ela fica guardada e não é pedida de novo.</p>
+    <input id="chave" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="senha">
+    <button id="chave-ok">Entrar</button>
+    <p id="chave-erro" style="color:#ff8a65"></p>
+  </div>
+  <p id="explica">O texto anda conforme você fala, sem precisar de internet. Errou? Diga <b>"volta"</b> e ele volta para o começo da frase (ou para a frase anterior, se você estiver no começo).</p>
+  <div id="lista" style="display:flex;flex-direction:column;gap:.6rem;width:min(640px,100%)"></div>
+  <button id="btn-ler" class="sec">📖 Ler o roteiro antes de gravar</button>
+  <button id="btn-tela" class="sec">⛶ Tela cheia</button>
+  <button id="btn-voz">🎙 Começar com a voz</button>
+  <button id="btn-auto" class="sec">▶ Rolagem automática (sem voz)</button>
+  <button id="btn-trocar" class="sec" style="display:none">☰ Outro roteiro</button>
+  <label id="opcoes"><input id="op-vocab" type="checkbox" style="width:18px;height:18px"> Ouvir só as palavras do roteiro (teste se o lugar for barulhento)</label>
+  <div id="estado"></div>
+  <button id="btn-atualizar" class="sec">🔄 Buscar roteiros novos</button>
+  <p style="font-size:13px;color:#777">Teclado, passador de slides ou controle Bluetooth (a tecla recebida aparece no canto de cima): <kbd>espaço</kbd> ou <kbd>Enter</kbd> pausa · <kbd>←</kbd>/<kbd>→</kbd> ou <kbd>PgUp</kbd>/<kbd>PgDn</kbd> frase anterior/próxima · <kbd>↑</kbd>/<kbd>↓</kbd> velocidade · <kbd>M</kbd> espelho · <kbd>+</kbd>/<kbd>−</kbd> letra. Gravando, toque: lado esquerdo volta, lado direito avança, meio pausa. Parado: role livre e toque numa frase para começar dali.</p>
+</div>
+
+<div id="barra">
+  <button id="b-play" class="principal">⏸ Pausar</button>
+  <button id="b-volta" title="Volta para o começo da frase">↩ Volta</button>
+  <button id="b-avanca" title="Próxima frase">↪ Próxima</button>
+  <select id="b-modo" title="Modo">
+    <option value="voz">🎙 Voz</option>
+    <option value="auto">▶ Automático</option>
+    <option value="manual">✋ Manual</option>
+  </select>
+  <label>Velocidade <input id="b-ppm" type="range" min="90" max="220" step="2"><span id="ppm-v"></span></label>
+  <label>Letra <input id="b-fonte" type="range" min="28" max="120" step="2"></label>
+  <label>Linha <input id="b-linha" type="range" min="4" max="60" step="1"></label>
+  <button id="b-tela" title="Tela cheia">⛶ Tela cheia</button>
+  <button id="b-espelho" title="Espelhar para o vidro do teleprompter">⇋ Espelho</button>
+  <button id="b-topo" title="Voltar ao início">⤒ Início</button>
+  <button id="b-menu" title="Tela inicial e lista de roteiros">☰</button>
+  <span id="status">pronto</span>
+</div>
+
+<script src="vosk-0.0.8.js"></script>
+<script>
+/* Teleprompter AgroSyntese, versão app (funciona sem internet).
+   Roteiros: roteiros.dat (cifrado com a senha; gerado por scripts/teleprompter-app.mjs).
+   Voz: Vosk rodando no próprio aparelho, modelo pequeno de português. */
+let ROTEIRO = null;
+
+// ---------- utilidades ----------
+const norm = (s) => s.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+const tokens = (s) => norm(s).split(/\s+/).filter(Boolean);
+function lev(a, b) {
+  if (a === b) return 0;
+  const m = a.length, n = b.length; if (!m || !n) return m || n;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+function parecido(a, b) {
+  if (a === b) return true;
+  if (a.length < 3 || b.length < 3) return false;
+  if (a.slice(0, 4) === b.slice(0, 4) && Math.min(a.length, b.length) >= 4) return true;
+  return lev(a, b) / Math.max(a.length, b.length) <= 0.34;
+}
+const $ = (id) => document.getElementById(id);
+
+// ---------- monta o texto ----------
+const palavras = []; // {n: normalizada, el, frase}
+const inicioFrase = []; // índice da 1ª palavra de cada frase
+function montar() {
+  palavras.length = 0; inicioFrase.length = 0;
+  document.title = 'Teleprompter · ' + ROTEIRO.titulo;
+  $('titulo-inicio').textContent = ROTEIRO.titulo;
+  const alvo = $('texto');
+  alvo.innerHTML = '';
+  let frase = -1, novaFrase = true;
+  for (const p of ROTEIRO.pars) {
+    if (p.tipo === 'bloco') {
+      const h = document.createElement('div'); h.className = 'bloco'; h.textContent = p.texto; alvo.appendChild(h); continue;
+    }
+    const par = document.createElement('p'); par.className = 'par' + (p.pers ? ' personagem' : '');
+    if (p.pers) { const s = document.createElement('span'); s.className = 'pers'; s.textContent = p.pers; par.appendChild(s); }
+    novaFrase = true;
+    for (const bruto of p.texto.split(/\s+/).filter(Boolean)) {
+      const n = tokens(bruto);
+      const span = document.createElement('span'); span.className = 'w'; span.textContent = bruto;
+      par.appendChild(span); par.appendChild(document.createTextNode(' '));
+      if (!n.length) continue; // pontuação solta
+      span.dataset.i = palavras.length;
+      if (novaFrase) { frase++; inicioFrase.push(palavras.length); novaFrase = false; }
+      // "2025/26" vira dois tokens que apontam para o mesmo elemento
+      for (const t of n) palavras.push({ n: t, el: span, frase });
+      if (/[.!?]["”')]*$/.test(bruto)) novaFrase = true; // reticências e dois-pontos são pausa, não fim de frase
+    }
+    alvo.appendChild(par);
+  }
+}
+
+// ---------- estado ----------
+const guardado = (() => { try { return JSON.parse(localStorage.getItem('tp-cfg') || '{}'); } catch (_) { return {}; } })();
+const fontePadrao = Math.round(Math.min(72, Math.max(32, window.innerWidth / 17))); // ~8 a 10 palavras por linha no tablet deitado
+const cfg = Object.assign({ fonte: fontePadrao, espelho: false, linha: 12, ppm: 154, vocab: false }, guardado);
+let pos = 0;              // próxima palavra a ser falada
+let modo = 'voz';
+let rodando = false;
+const salvar = () => { try { localStorage.setItem('tp-cfg', JSON.stringify(cfg)); } catch (_) {} };
+function aplicarCfg() {
+  document.documentElement.style.setProperty('--fonte', cfg.fonte + 'px');
+  document.body.classList.toggle('espelho', !!cfg.espelho);
+  document.documentElement.style.setProperty('--guia', cfg.linha + 'vh');
+  $('b-fonte').value = cfg.fonte; $('b-linha').value = cfg.linha; $('b-ppm').value = cfg.ppm; $('ppm-v').textContent = cfg.ppm + ' ppm';
+  $('op-vocab').checked = !!cfg.vocab;
+}
+aplicarCfg();
+$('op-vocab').onchange = (e) => { cfg.vocab = e.target.checked; salvar(); };
+
+// ---------- desenho e rolagem ----------
+let marcado = -1;
+// Adianto: o reconhecimento chega com algum atraso; entre um reconhecimento e outro o texto
+// avança sozinho no ritmo do Victor (sem passar do fim da frase).
+let adianto = 0, ultimoCasamento = 0;
+const ADIANTO_MAX = 8;
+function posExibida() { return Math.min(palavras.length, pos + adianto); }
+function pintar() {
+  const ate = posExibida();
+  const a = marcado < 0 ? 0 : Math.min(marcado, ate), b = marcado < 0 ? palavras.length : Math.max(marcado, ate);
+  for (let i = Math.max(0, a - 1); i < Math.min(palavras.length, b + 1); i++) {
+    palavras[i].el.classList.toggle('lido', i < ate);
+    palavras[i].el.classList.remove('atual');
+  }
+  if (palavras[ate]) palavras[ate].el.classList.add('atual');
+  marcado = ate;
+}
+const palco = $('palco');
+let alvoScroll = 0;
+function mirar() {
+  const w = palavras[Math.min(posExibida(), palavras.length - 1)];
+  if (!w) return;
+  puxar = true;
+  const guia = window.innerHeight * (cfg.linha / 100);
+  alvoScroll = Math.max(0, w.el.offsetTop - guia);
+}
+let puxar = true; // false quando o Victor rola com o dedo fora da gravação
+(function animar() {
+  const d = alvoScroll - palco.scrollTop;
+  if ((rodando || puxar) && Math.abs(d) > 0.5) palco.scrollTop += d * 0.25;
+  else if (Math.abs(d) <= 0.5) puxar = false;
+  requestAnimationFrame(animar);
+})();
+['wheel', 'touchmove'].forEach((ev) => palco.addEventListener(ev, () => { if (!rodando) puxar = false; }, { passive: true }));
+function irPara(i, aviso) {
+  if (aviso) { adianto = 0; ultimoCasamento = 0; }
+  pos = Math.max(0, Math.min(i, palavras.length));
+  pintar(); mirar();
+  if (aviso) mostrarAviso(aviso);
+}
+let tAviso;
+function mostrarAviso(t, ms = 1200) { const a = $('aviso'); a.textContent = t; a.classList.add('ver'); clearTimeout(tAviso); tAviso = setTimeout(() => a.classList.remove('ver'), ms); }
+function inicioDaFraseAtual() { const f = palavras[Math.min(pos, palavras.length - 1)]?.frase ?? 0; return { f, i: inicioFrase[f] ?? 0 }; }
+function voltaFrase() {
+  const { f, i } = inicioDaFraseAtual();
+  const destino = pos - i <= 2 && f > 0 ? inicioFrase[f - 1] : i;
+  irPara(destino, '↩ volta');
+  autoAcum = 0;
+}
+function avancaFrase() { const { f } = inicioDaFraseAtual(); irPara(inicioFrase[f + 1] ?? palavras.length, '↪'); autoAcum = 0; }
+
+// ---------- modo automático ----------
+let autoAcum = 0, ultimoT = 0;
+function passoAuto(t) {
+  if (modo === 'voz' && rodando && ultimoCasamento && pos < palavras.length) {
+    const dt = (t - ultimoCasamento) / 1000;
+    if (dt < 3) {
+      const f = palavras[pos].frase;
+      const fimFrase = inicioFrase[f + 1] ?? palavras.length;
+      const alvo = Math.min(ADIANTO_MAX, fimFrase - pos, 1 + Math.floor((dt * cfg.ppm) / 60));
+      if (alvo > adianto) { adianto = alvo; pintar(); mirar(); }
+    }
+  }
+  if (modo === 'auto' && rodando) {
+    if (ultimoT) {
+      autoAcum += ((t - ultimoT) / 60000) * cfg.ppm;
+      if (autoAcum >= 1) { const n = Math.floor(autoAcum); autoAcum -= n; irPara(pos + n); }
+      if (pos >= palavras.length) parar();
+    }
+    ultimoT = t;
+  } else ultimoT = 0;
+  requestAnimationFrame(passoAuto);
+}
+requestAnimationFrame(passoAuto);
+
+// ---------- acompanhamento pela voz ----------
+const COMANDO = 'volta';
+
+function nota(cauda, j) {
+  // quantas palavras da cauda aparecem, em ordem, terminando na palavra j do roteiro
+  if (!parecido(cauda[cauda.length - 1], palavras[j].n)) return 0;
+  let n = 1, k = j - 1;
+  for (let t = cauda.length - 2; t >= 0 && k >= 0 && k >= j - 12; t--) {
+    let achou = false;
+    for (let kk = k; kk >= Math.max(0, k - 2); kk--) if (parecido(cauda[t], palavras[kk].n)) { n++; k = kk - 1; achou = true; break; }
+    if (!achou) k--;
+  }
+  return n;
+}
+function casar(cauda) {
+  if (!cauda.length) return -1;
+  let melhor = -1, melhorPontos = 0;
+  const avaliar = (ini, fim, minimo) => {
+    for (let a = 0; a < Math.min(3, cauda.length); a++) {
+      const c = cauda.slice(0, cauda.length - a);
+      for (let j = Math.max(0, ini); j <= Math.min(palavras.length - 1, fim); j++) {
+        const n = nota(c, j);
+        if (!n) continue;
+        const pulo = j - pos;
+        const exige = Math.max(minimo, pulo > 12 ? 3 : pulo > 4 ? 2 : 1);
+        if (n < exige) continue;
+        const pontos = n * 10 - Math.abs(pulo) * 0.3 - a * 4;
+        if (pontos > melhorPontos) { melhorPontos = pontos; melhor = j; }
+      }
+    }
+  };
+  avaliar(pos - 4, pos + 35, 1);
+  if (melhor < 0) avaliar(pos + 36, pos + 250, 4);
+  return melhor;
+}
+
+function voltaEhDoRoteiro(lista, idx) {
+  for (let j = pos; j <= Math.min(palavras.length - 1, pos + 1); j++) {
+    if (palavras[j].n === COMANDO && j > 0 && idx > 0 && lista[idx - 1] === palavras[j - 1].n) return true;
+  }
+  return false;
+}
+
+let voltaDoTextoAte = -1;
+function processarOuvido(lista) {
+  const novaQtd = lista.length;
+  const idx = lista.lastIndexOf(COMANDO);
+  if (idx > voltaDoTextoAte) {
+    if (voltaEhDoRoteiro(lista, idx)) voltaDoTextoAte = idx;
+    else { voltaFrase(); voltaDoTextoAte = -1; return { comando: true, cortarAte: idx + 1 }; }
+  }
+  const cauda = lista.slice(-6);
+  const j = casar(cauda);
+  if (j >= 0 && j + 1 > pos - 4) {
+    const visivel = posExibida();
+    pos = Math.max(0, Math.min(j + 1, palavras.length));
+    adianto = Math.max(0, Math.min(ADIANTO_MAX, visivel - pos));
+    ultimoCasamento = performance.now();
+    pintar(); mirar();
+  }
+  if (pos >= palavras.length) { mostrarAviso('Fim ✓'); }
+  return { comando: false, n: novaQtd };
+}
+
+// ---------- voz offline (Vosk) ----------
+const MODELO_URL = 'modelo/vosk-pt-small-0.3.tar.gz';
+// números falados por extenso que não aparecem escritos no roteiro ("2025", "30%")
+const NUMEROS = 'zero um uma dois duas três quatro cinco seis sete oito nove dez onze doze treze quatorze catorze quinze dezesseis dezessete dezoito dezenove vinte trinta quarenta cinquenta sessenta setenta oitenta noventa cem cento duzentos trezentos quatrocentos quinhentos seiscentos setecentos oitocentos novecentos mil milhão milhões bilhão bilhões e por vírgula meio meia'.split(' ');
+let vModelo = null, vCarregando = null, vErro = '';
+let vRec = null, vCtx = null, vStream = null, vNode = null, vSessao = 0;
+let vFinais = [], vParcial = [], vDescartar = 0;
+let reconhecendo = false;
+const dParadoPorQueda = false; // (a versão do claude.ai precisava de um toque para voltar a ouvir; aqui não)
+
+function carregarVoz() {
+  if (vModelo) return Promise.resolve(vModelo);
+  if (vCarregando) return vCarregando;
+  if (!window.Vosk) { vErro = 'o motor de voz não carregou'; estado(); return Promise.reject(new Error(vErro)); }
+  vErro = '';
+  vCarregando = new Promise((ok, falha) => {
+    const m = new Vosk.Model(MODELO_URL);
+    m.on('load', (msg) => (msg.result ? ok(m) : falha(new Error('modelo não abriu'))));
+    m.on('error', (msg) => falha(new Error(String(msg.error || 'erro no modelo'))));
+  }).then((m) => { vModelo = m; estado(); return m; })
+    .catch((e) => { vCarregando = null; vErro = navigator.onLine ? e.message : 'sem internet na primeira vez: abra o app uma vez com internet para baixar a voz'; estado(); throw e; });
+  estado();
+  return vCarregando;
+}
+
+function vocabulario() {
+  const set = new Set([COMANDO, '[unk]', ...NUMEROS]);
+  for (const p of ROTEIRO.pars) {
+    if (p.tipo !== 'fala') continue;
+    for (const w of p.texto.toLowerCase().split(/[^\p{L}]+/u)) if (w) set.add(w);
+  }
+  return [...set];
+}
+function criarReconhecedor(modelo, taxa) {
+  if (cfg.vocab) {
+    try { return new modelo.KaldiRecognizer(taxa, JSON.stringify(vocabulario())); } catch (_) {}
+  }
+  return new modelo.KaldiRecognizer(taxa);
+}
+function ouvirVosk() {
+  const lista = vFinais.concat(vParcial).slice(vDescartar);
+  $('ouvido').textContent = lista.slice(-8).join(' ');
+  const r = processarOuvido(lista);
+  if (r.comando) vDescartar += r.cortarAte;
+}
+
+async function iniciarVoz() {
+  const sessao = ++vSessao;
+  vFinais = []; vParcial = []; vDescartar = 0; voltaDoTextoAte = -1;
+  // o áudio precisa nascer no toque; o resto pode esperar
+  try { vCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) { semVoz('Este aparelho não abriu o áudio'); return; }
+  try {
+    vStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, video: false });
+  } catch (e) {
+    if (sessao !== vSessao) return;
+    semVoz(e && e.name === 'NotAllowedError' ? 'Microfone não autorizado' : 'Não consegui abrir o microfone');
+    return;
+  }
+  if (sessao !== vSessao) return;
+  try { await vCtx.resume(); } catch (_) {}
+  if (!vModelo) status('🎙 preparando a voz…');
+  let modelo;
+  try { modelo = await carregarVoz(); } catch (e) { if (sessao === vSessao) semVoz('A voz não carregou (' + vErro + ')'); return; }
+  if (sessao !== vSessao || !rodando || modo !== 'voz') return;
+  const rec = criarReconhecedor(modelo, vCtx.sampleRate);
+  vRec = rec;
+  rec.on('result', (m) => {
+    if (rec !== vRec) return;
+    const t = (m.result && m.result.text) || '';
+    if (t) vFinais = vFinais.concat(tokens(t));
+    vParcial = [];
+    ouvirVosk();
+  });
+  rec.on('partialresult', (m) => {
+    if (rec !== vRec) return;
+    const novo = tokens((m.result && m.result.partial) || '');
+    if (novo.join(' ') === vParcial.join(' ')) return;
+    vParcial = novo;
+    ouvirVosk();
+  });
+  const fonte = vCtx.createMediaStreamSource(vStream);
+  vNode = vCtx.createScriptProcessor(4096, 1, 1);
+  vNode.onaudioprocess = (ev) => { if (vRec === rec) { try { rec.acceptWaveform(ev.inputBuffer); } catch (_) {} } };
+  fonte.connect(vNode); vNode.connect(vCtx.destination);
+  reconhecendo = true;
+  status('🎙 ouvindo');
+}
+function pararVoz() {
+  vSessao++;
+  if (vNode) { try { vNode.onaudioprocess = null; vNode.disconnect(); } catch (_) {} vNode = null; }
+  if (vRec) { const r = vRec; vRec = null; try { r.remove(); } catch (_) {} }
+  if (vStream) { vStream.getTracks().forEach((t) => t.stop()); vStream = null; }
+  if (vCtx) { vCtx.close().catch(() => {}); vCtx = null; }
+  reconhecendo = false;
+}
+
+var vozIndisponivel = false;
+function semVoz(motivo) {
+  if (modo !== 'voz') return;
+  parar();
+  status('sem voz', true);
+  $('semvoz-motivo').textContent = motivo + '.';
+  $('semvoz').style.display = 'flex';
+}
+
+// ---------- controle ----------
+function status(t, erro) { const s = $('status'); s.textContent = t; s.classList.toggle('erro', !!erro); }
+let travaTela = null;
+async function manterTelaAcesa() { try { travaTela = await navigator.wakeLock?.request('screen'); } catch (_) {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && rodando) manterTelaAcesa(); });
+
+let precisaTela = false;
+const pedirTela = () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {}); };
+document.addEventListener('fullscreenchange', () => {
+  if (rodando && !document.fullscreenElement && !window.matchMedia('(display-mode: fullscreen)').matches) { precisaTela = true; mostrarAviso('Toque na tela para voltar à tela cheia', 2500); }
+  else precisaTela = false;
+});
+function comecar(m) {
+  if (!ROTEIRO) return;
+  modo = m; $('b-modo').value = m;
+  $('tela-inicio').style.display = 'none';
+  rodando = true; document.body.classList.add('gravando');
+  $('b-play').textContent = '⏸ Pausar';
+  if (m === 'voz') { status('🎙 abrindo o microfone…'); iniciarVoz(); } else { pararVoz(); status(m === 'auto' ? '▶ automático' : '✋ manual'); }
+  manterTelaAcesa();
+  mirar();
+}
+function parar() {
+  rodando = false; pararVoz(); document.body.classList.remove('gravando');
+  $('b-play').textContent = '▶ Continuar'; status('pausado');
+}
+$('semvoz-tentar').onclick = () => { $('semvoz').style.display = 'none'; comecar('voz'); };
+$('semvoz-auto').onclick = () => { $('semvoz').style.display = 'none'; $('tela-inicio').style.display = 'none'; comecar('auto'); };
+$('semvoz-fechar').onclick = () => { $('semvoz').style.display = 'none'; };
+$('btn-ler').onclick = () => {
+  $('tela-inicio').style.display = 'none';
+  document.body.classList.remove('gravando');
+  rodando = false; puxar = false;
+  $('b-play').textContent = '▶ Começar';
+  status('leitura livre: role à vontade · toque numa frase para começar dali');
+};
+$('btn-voz').onclick = () => comecar('voz');
+$('btn-auto').onclick = () => comecar('auto');
+$('b-play').onclick = () => (rodando ? parar() : comecar(modo));
+$('b-volta').onclick = voltaFrase;
+$('b-avanca').onclick = avancaFrase;
+$('b-topo').onclick = () => irPara(0, '⤒ início');
+$('b-modo').onchange = (e) => { if (rodando) { parar(); comecar(e.target.value); } else modo = e.target.value; };
+$('b-ppm').oninput = (e) => { cfg.ppm = +e.target.value; aplicarCfg(); salvar(); };
+$('b-fonte').oninput = (e) => { cfg.fonte = +e.target.value; aplicarCfg(); salvar(); mirar(); };
+$('b-espelho').onclick = () => { cfg.espelho = !cfg.espelho; aplicarCfg(); salvar(); };
+$('b-linha').oninput = (e) => { cfg.linha = +e.target.value; aplicarCfg(); salvar(); mirar(); };
+const alternaTela = () => { if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); } else { document.documentElement.requestFullscreen().catch(() => mostrarAviso('Tela cheia não disponível aqui')); } };
+$('b-tela').onclick = alternaTela;
+$('btn-tela').onclick = alternaTela;
+
+// Controle Bluetooth: mostra a tecla recebida, para descobrir o que cada botão manda
+let tTecla;
+function mostrarTecla(e) {
+  const o = $('ouvido'); o.style.color = '#c99a2e';
+  o.textContent = `🎮 tecla: ${e.key || '?'} (${e.code || e.keyCode || '-'})`;
+  clearTimeout(tTecla); tTecla = setTimeout(() => { o.style.color = ''; o.textContent = ''; }, 2500);
+}
+// Controle em modo "jogo" (gamepad): joystick ↑/↓ = velocidade · ←/→ = frase anterior/próxima ·
+// botão 0 = pausar/continuar · botão 1 = volta a frase · botão 2 e 3 = próxima frase.
+const ACOES_BOTAO = { 0: 'play', 1: 'volta', 2: 'avanca', 3: 'avanca', 4: 'volta', 5: 'avanca', 6: 'volta', 7: 'avanca', 9: 'play' };
+let antes = {}, eixoTravado = { x: false, y: false };
+function acaoControle(acao) {
+  const inicio = $('tela-inicio').style.display !== 'none';
+  if (acao === 'play') { if (inicio) return; rodando ? parar() : comecar(modo); }
+  else if (acao === 'volta') voltaFrase();
+  else if (acao === 'avanca') avancaFrase();
+  else if (acao === 'mais') { cfg.ppm = Math.min(220, cfg.ppm + 6); aplicarCfg(); salvar(); mostrarAviso(cfg.ppm + ' ppm'); }
+  else if (acao === 'menos') { cfg.ppm = Math.max(90, cfg.ppm - 6); aplicarCfg(); salvar(); mostrarAviso(cfg.ppm + ' ppm'); }
+}
+function mostrarControle(txt) {
+  const o = $('ouvido'); o.style.color = '#c99a2e'; o.textContent = '🎮 ' + txt;
+  clearTimeout(tTecla); tTecla = setTimeout(() => { o.style.color = ''; o.textContent = ''; }, 2500);
+}
+window.addEventListener('gamepadconnected', (e) => mostrarAviso('🎮 Controle conectado: ' + (e.gamepad.id || 'gamepad').slice(0, 30), 2500));
+(function lerControle() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const g of pads) {
+    if (!g) continue;
+    g.buttons.forEach((bt, i) => {
+      const chave = g.index + ':' + i, apertado = bt.pressed || bt.value > 0.5;
+      if (apertado && !antes[chave]) { mostrarControle('botão ' + i); if (ACOES_BOTAO[i]) acaoControle(ACOES_BOTAO[i]); }
+      antes[chave] = apertado;
+    });
+    const [x = 0, y = 0] = g.axes;
+    if (Math.abs(x) > 0.6 && !eixoTravado.x) { eixoTravado.x = true; mostrarControle(x < 0 ? 'joystick ←' : 'joystick →'); acaoControle(x < 0 ? 'volta' : 'avanca'); }
+    if (Math.abs(x) < 0.3) eixoTravado.x = false;
+    if (Math.abs(y) > 0.6 && !eixoTravado.y) { eixoTravado.y = true; mostrarControle(y < 0 ? 'joystick ↑' : 'joystick ↓'); acaoControle(y < 0 ? 'mais' : 'menos'); }
+    if (Math.abs(y) < 0.3) eixoTravado.y = false;
+  }
+  requestAnimationFrame(lerControle);
+})();
+
+document.addEventListener('keydown', (e) => {
+  if (e.target && e.target.id === 'chave') return;
+  mostrarTecla(e);
+  if ($('tela-inicio').style.display !== 'none') return;
+  const k = e.key;
+  if (k === ' ' || k === 'Enter' || k === 'MediaPlayPause' || k === 'MediaPlay' || k === 'MediaPause') { e.preventDefault(); rodando ? parar() : comecar(modo); }
+  else if (k === 'MediaTrackPrevious') { e.preventDefault(); voltaFrase(); }
+  else if (k === 'MediaTrackNext') { e.preventDefault(); avancaFrase(); }
+  else if (k === 'Escape') parar();
+  else if (k === 'ArrowLeft' || k === 'PageUp') { e.preventDefault(); voltaFrase(); }
+  else if (k === 'ArrowRight' || k === 'PageDown') { e.preventDefault(); avancaFrase(); }
+  else if (k === 'ArrowUp') { cfg.ppm = Math.min(220, cfg.ppm + 6); aplicarCfg(); salvar(); }
+  else if (k === 'ArrowDown') { cfg.ppm = Math.max(90, cfg.ppm - 6); aplicarCfg(); salvar(); }
+  else if (k === 'm' || k === 'M') { cfg.espelho = !cfg.espelho; aplicarCfg(); salvar(); }
+  else if (k === '+' || k === '=') { cfg.fonte = Math.min(120, cfg.fonte + 4); aplicarCfg(); salvar(); mirar(); }
+  else if (k === '-') { cfg.fonte = Math.max(28, cfg.fonte - 4); aplicarCfg(); salvar(); mirar(); }
+});
+palco.addEventListener('click', (e) => {
+  if (precisaTela) { precisaTela = false; pedirTela(); return; }
+  if (!rodando) {
+    const alvoW = e.target.closest && e.target.closest('.w');
+    if (alvoW && alvoW.dataset.i !== undefined) {
+      const i = +alvoW.dataset.i;
+      const ini = inicioFrase[palavras[i].frase] ?? i;
+      irPara(ini, '▶ começa daqui');
+      status('pronto: toque ▶ Continuar ou 🎙 para gravar a partir daqui');
+    }
+    return;
+  }
+  const x = e.clientX / window.innerWidth;
+  const esq = cfg.espelho ? x > 0.66 : x < 0.33, dir = cfg.espelho ? x < 0.33 : x > 0.66;
+  if (esq) voltaFrase(); else if (dir) avancaFrase(); else (rodando ? parar() : comecar(modo));
+});
+window.addEventListener('resize', mirar);
+
+// ---------- roteiros (cifrados com a senha, guardados no aparelho) ----------
+const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+async function decifrar(pac, senha) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(senha), 'PBKDF2', false, ['deriveKey']);
+  const chave = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b64(pac.sal), iterations: pac.iter, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+  const claro = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(pac.iv) }, chave, b64(pac.dados));
+  return JSON.parse(new TextDecoder().decode(claro));
+}
+const lerSenha = () => { try { return localStorage.getItem('tp-senha') || ''; } catch (_) { return ''; } };
+let PACOTE = null, origemPacote = '';
+
+async function buscarPacote() {
+  const r = await fetch('roteiros.dat', { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+async function carregarRoteiros(senha) {
+  const pac = await buscarPacote();
+  PACOTE = await decifrar(pac, senha); // senha errada: lança erro
+  try { localStorage.setItem('tp-senha', senha); } catch (_) {}
+  return PACOTE;
+}
+function pedirSenha(msg) {
+  $('chave-box').style.display = 'flex';
+  $('explica').style.display = 'none';
+  $('chave-erro').textContent = msg || '';
+  setTimeout(() => $('chave').focus(), 50);
+}
+$('chave-ok').onclick = async () => {
+  const s = $('chave').value.trim();
+  if (!s) return;
+  $('chave-erro').textContent = 'abrindo…';
+  try { await carregarRoteiros(s); $('chave-box').style.display = 'none'; $('explica').style.display = ''; mostrarLista(); }
+  catch (_) { $('chave-erro').textContent = navigator.onLine ? 'Senha não confere.' : 'Sem internet e ainda sem roteiros guardados: abra uma vez com internet.'; }
+};
+$('chave').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('chave-ok').click(); });
+
+function brData(s) { return s ? s.slice(0, 10).split('-').reverse().join('/') : '—'; }
+function mostrarLista() {
+  ROTEIRO = null;
+  $('btn-voz').style.display = 'none'; $('btn-auto').style.display = 'none'; $('btn-ler').style.display = 'none'; $('btn-trocar').style.display = 'none';
+  $('titulo-inicio').textContent = 'Escolha o roteiro';
+  document.title = 'Teleprompter AgroSyntese';
+  const lista = $('lista');
+  lista.innerHTML = '';
+  const cab = document.createElement('p');
+  cab.style.cssText = 'margin:.4rem 0 .2rem;font-size:14px;opacity:.7;text-transform:uppercase;letter-spacing:.05em';
+  cab.textContent = 'Ordem de gravação';
+  lista.appendChild(cab);
+  PACOTE.roteiros.forEach((item, n) => {
+    const b = document.createElement('button');
+    b.className = 'sec';
+    b.style.cssText = 'text-align:left;font-size:17px;padding:.8rem 1rem';
+    b.textContent = `${n + 1}. ${item.titulo}  ·  ~${item.minutos} min`;
+    b.onclick = () => {
+      ROTEIRO = item.roteiro;
+      lista.innerHTML = '';
+      $('btn-trocar').style.display = '';
+      prontoParaGravar();
+    };
+    lista.appendChild(b);
+  });
+  if (!PACOTE.roteiros.length) lista.innerHTML = '<p>Nenhum roteiro ainda.</p>';
+  estado();
+}
+function prontoParaGravar() {
+  montar(); marcado = -1; pos = 0; pintar(); mirar();
+  if (!guardado.ppm && ROTEIRO.ppm) { cfg.ppm = ROTEIRO.ppm; aplicarCfg(); }
+  $('btn-voz').style.display = ''; $('btn-auto').style.display = ''; $('btn-ler').style.display = '';
+}
+
+// ---------- quadro "pronto para usar sem internet" ----------
+let swPronto = false;
+function estado() {
+  const linhas = [];
+  if (PACOTE) linhas.push(`<span class="ok">✓ ${PACOTE.roteiros.length} roteiros guardados (versão de ${brData(PACOTE.atualizado)})</span>`);
+  if (vModelo) linhas.push('<span class="ok">✓ Voz pronta, funciona sem internet</span>');
+  else if (vErro) linhas.push(`<span class="alerta">⚠ Voz: ${vErro}</span>`);
+  else if (vCarregando) linhas.push('<span>⏳ Preparando a voz… (na primeira vez baixa uns 30 MB; deixe o app aberto)</span>');
+  if (swPronto) linhas.push('<span class="ok">✓ App guardado no aparelho</span>');
+  linhas.push(navigator.onLine ? '<span>Com internet</span>' : '<span class="alerta">Sem internet: usando o que está guardado</span>');
+  $('estado').innerHTML = linhas.join('');
+}
+window.addEventListener('online', estado);
+window.addEventListener('offline', estado);
+
+$('btn-atualizar').onclick = async () => {
+  const b = $('btn-atualizar'); const t = b.textContent;
+  b.textContent = 'Buscando…'; b.disabled = true;
+  try {
+    const antes = PACOTE && PACOTE.atualizado;
+    await carregarRoteiros(lerSenha());
+    if (!ROTEIRO) mostrarLista();
+    mostrarAviso(PACOTE.atualizado !== antes ? 'Roteiros novos ✓' : 'Já estava em dia ✓', 1800);
+  } catch (_) { mostrarAviso(navigator.onLine ? 'Não consegui buscar agora' : 'Sem internet: seguem os roteiros guardados', 2200); }
+  b.textContent = t; b.disabled = false; estado();
+};
+
+$('b-menu').onclick = () => { parar(); $('tela-inicio').style.display = 'flex'; };
+$('btn-trocar').onclick = () => { parar(); if (PACOTE) mostrarLista(); };
+
+async function iniciar() {
+  $('btn-voz').style.display = 'none'; $('btn-auto').style.display = 'none'; $('btn-ler').style.display = 'none';
+  estado();
+  const senha = lerSenha();
+  if (!senha) pedirSenha();
+  else {
+    try { await carregarRoteiros(senha); mostrarLista(); }
+    catch (_) { pedirSenha(navigator.onLine ? 'A senha mudou: digite a nova.' : 'Sem internet e ainda sem roteiros guardados: abra uma vez com internet.'); }
+  }
+  // prepara a voz já na abertura, para estar pronta quando for gravar
+  carregarVoz().catch(() => {});
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (_) {}
+}
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready).then(() => { swPronto = true; estado(); }).catch(() => {});
+}
+iniciar();
+</script>
+</body>
+</html>
