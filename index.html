@@ -77,7 +77,7 @@
     <button id="chave-ok">Entrar</button>
     <p id="chave-erro" style="color:#ff8a65"></p>
   </div>
-  <p id="explica">O texto anda conforme você fala, sem precisar de internet. Errou? Diga <b>"volta"</b> e ele volta para o começo da frase (ou para a frase anterior, se você estiver no começo).</p>
+  <p id="explica">O texto anda conforme você fala, sem precisar de internet. Errou? Diga <b>"volta"</b> e ele volta para o começo da frase (ou para a frase anterior, se você estiver no começo). Cada "volta" recua uma frase.</p>
   <div id="lista" style="display:flex;flex-direction:column;gap:.6rem;width:min(640px,100%)"></div>
   <button id="btn-ler" class="sec">📖 Ler o roteiro antes de gravar</button>
   <button id="btn-tela" class="sec">⛶ Tela cheia</button>
@@ -130,8 +130,19 @@ function lev(a, b) {
   }
   return prev[n];
 }
+// a mesma comparação se repete muito (palavra ouvida × palavra do roteiro): guarda a resposta
+const memoParecido = new Map();
 function parecido(a, b) {
   if (a === b) return true;
+  const k = a + '|' + b;
+  let r = memoParecido.get(k);
+  if (r === undefined) {
+    if (memoParecido.size > 60000) memoParecido.clear();
+    r = parecidoCalc(a, b); memoParecido.set(k, r);
+  }
+  return r;
+}
+function parecidoCalc(a, b) {
   if (a.length < 3 || b.length < 3) return false;
   if (a.slice(0, 4) === b.slice(0, 4) && Math.min(a.length, b.length) >= 4) return true;
   return lev(a, b) / Math.max(a.length, b.length) <= 0.34;
@@ -313,47 +324,81 @@ function casar(cauda) {
     }
   };
   avaliar(pos - 4, pos + 35, 1);
-  if (melhor < 0) avaliar(pos + 36, pos + 250, 4);
+  // busca longe: pulou um trecho (à frente) ou recomeçou uma frase sem dizer "volta" (atrás). Pede 4 palavras
+  // seguidas batendo e, por ser pesada em roteiro longo, roda no máximo 3 vezes por segundo.
+  const agora = performance.now();
+  if (melhor < 0 && agora - ultimaBuscaLonge > 330) {
+    ultimaBuscaLonge = agora;
+    avaliar(pos + 36, pos + 250, 4);
+    if (melhor < 0) avaliar(pos - 60, pos - 5, 4);
+  }
   return melhor;
 }
+let ultimaBuscaLonge = 0;
 
-function voltaEhDoRoteiro(lista, idx) {
-  for (let j = pos; j <= Math.min(palavras.length - 1, pos + 1); j++) {
-    if (palavras[j].n === COMANDO && j > 0 && idx > 0 && lista[idx - 1] === palavras[j - 1].n) return true;
+// O motor às vezes entende "volte" ou "voltar": vale como o comando. ("volto" fica de fora: o motor completo
+// confunde com "Galvão".)
+const VOLTAS = new Set([COMANDO, 'volte', 'voltar']);
+// "volta" que está escrito no roteiro e foi lido no lugar certo não é comando
+function voltaEhDoRoteiro(frase, q) {
+  const anterior = q > 0 ? frase[q - 1] : vFinais[vFinais.length - 1]; // a palavra dita antes, mesmo que na frase anterior
+  if (!anterior) return false;
+  const fim = Math.min(palavras.length - 1, posExibida() + 3);
+  for (let j = Math.max(1, pos - 2); j <= fim; j++) {
+    if (VOLTAS.has(palavras[j].n) && parecido(anterior, palavras[j - 1].n)) return true;
   }
   return false;
 }
-
-let voltaDoTextoAte = -1;
-function processarOuvido(lista) {
-  const novaQtd = lista.length;
-  const idx = lista.lastIndexOf(COMANDO);
-  if (idx > voltaDoTextoAte) {
-    if (voltaEhDoRoteiro(lista, idx)) voltaDoTextoAte = idx;
-    else { voltaFrase(); voltaDoTextoAte = -1; return { comando: true, cortarAte: idx + 1 }; }
+// Cada frase que o motor ouve chega várias vezes (parcial, parcial maior, final). Os "volta" dela são
+// decididos uma vez só, pela ordem em que aparecem, e cada um recua uma vez só.
+let decisoesVolta = [], ultimaVolta = 0, leuDesdeVolta = true;
+function comandosNaFrase(frase) {
+  let k = 0, corte = 0;
+  for (let q = 0; q < frase.length; q++) {
+    if (!VOLTAS.has(frase[q])) continue;
+    if (decisoesVolta[k] === undefined) {
+      decisoesVolta[k] = !voltaEhDoRoteiro(frase, q);
+      if (decisoesVolta[k]) {
+        const t = performance.now();
+        // "volta, volta" seguido, sem ter lido nada no meio: é o mesmo pedido, não recua duas frases
+        if (leuDesdeVolta || t - ultimaVolta > 1000) voltaFrase();
+        ultimaVolta = t; leuDesdeVolta = false;
+      }
+    }
+    if (decisoesVolta[k]) corte = q + 1;
+    k++;
   }
+  return corte; // o que veio antes do último "volta" não conta mais
+}
+
+function processarOuvido(lista) {
   const cauda = lista.slice(-6);
   const j = casar(cauda);
-  if (j >= 0 && j + 1 > pos - 4) {
-    const visivel = posExibida();
+  if (j >= 0) {
+    const visivel = posExibida(), recomecou = j + 1 < pos - 4;
     pos = Math.max(0, Math.min(j + 1, palavras.length));
+    if (recomecou) { historico.length = 0; adianto = aFrente(0); }
+    else adianto = Math.max(aFrente(0), Math.min(ADIANTO_MAX, visivel - pos)); // não volta o que já foi mostrado
     registrarRitmo(pos);
-    adianto = Math.max(aFrente(0), Math.min(ADIANTO_MAX, visivel - pos)); // não volta o que já foi mostrado
     ultimoCasamento = performance.now();
+    leuDesdeVolta = true;
     pintar(); mirar();
   }
   if (pos >= palavras.length) { mostrarAviso('Fim ✓'); }
-  return { comando: false, n: novaQtd };
 }
 
 // ---------- voz offline (Vosk) ----------
 // endereço completo: o motor roda num "worker" que não sabe em que pasta o app está (no GitHub é /teleprompter/)
-const MODELO_URL = new URL('modelo/vosk-pt-small-0.3.tar.gz', location.href).href;
+// Modelo com a busca do motor mais enxuta (mais leve para o tablet, mesma precisão). O anterior fica de reserva:
+// quem já o tem guardado continua com voz sem internet enquanto o novo não termina de baixar.
+const MODELO_URL = new URL('modelo/vosk-pt-small-0.3-rapido.tar.gz', location.href).href;
+const MODELO_RESERVA = new URL('modelo/vosk-pt-small-0.3.tar.gz', location.href).href;
+let vReserva = false;
 // números falados por extenso que não aparecem escritos no roteiro ("2025", "30%")
 const NUMEROS = 'zero um uma dois duas três quatro cinco seis sete oito nove dez onze doze treze quatorze catorze quinze dezesseis dezessete dezoito dezenove vinte trinta quarenta cinquenta sessenta setenta oitenta noventa cem cento duzentos trezentos quatrocentos quinhentos seiscentos setecentos oitocentos novecentos mil milhão milhões bilhão bilhões e por vírgula meio meia'.split(' ');
 let vModelo = null, vCarregando = null, vErro = '';
 let vRec = null, vCtx = null, vStream = null, vNode = null, vSessao = 0;
-let vFinais = [], vParcial = [], vDescartar = 0;
+let vFinais = [], vParcial = [];
 let reconhecendo = false;
 const dParadoPorQueda = false; // (a versão do claude.ai precisava de um toque para voltar a ouvir; aqui não)
 
@@ -362,11 +407,15 @@ function carregarVoz() {
   if (vCarregando) return vCarregando;
   if (!window.Vosk) { vErro = 'o motor de voz não carregou'; estado(); return Promise.reject(new Error(vErro)); }
   vErro = '';
-  vCarregando = new Promise((ok, falha) => {
-    const m = new Vosk.Model(MODELO_URL);
-    m.on('load', (msg) => (msg.result ? ok(m) : falha(new Error('modelo não abriu'))));
-    m.on('error', (msg) => falha(new Error(String(msg.error || 'erro no modelo'))));
-  }).then((m) => { vModelo = m; estado(); return m; })
+  const abrir = (url) => new Promise((ok, falha) => {
+    const m = new Vosk.Model(url);
+    const desistir = (e) => { try { m.terminate(); } catch (_) {} falha(e); };
+    m.on('load', (msg) => (msg.result ? ok(m) : desistir(new Error('modelo não abriu'))));
+    m.on('error', (msg) => desistir(new Error(String(msg.error || 'erro no modelo'))));
+  });
+  vCarregando = abrir(MODELO_URL)
+    .catch((e) => abrir(MODELO_RESERVA).then((m) => { vReserva = true; return m; }, () => { throw e; }))
+    .then((m) => { vModelo = m; estado(); return m; })
     .catch((e) => { vCarregando = null; vErro = navigator.onLine ? e.message : 'sem internet na primeira vez: abra o app uma vez com internet para baixar a voz'; estado(); throw e; });
   estado();
   return vCarregando;
@@ -400,33 +449,80 @@ function reamostrar(x, de) {
   return y;
 }
 // Fila: cada pedaço de áudio enviado volta como uma resposta. Se o tablet não der conta, a fila cresce e o
-// texto fica cada vez mais para trás. Passou de 1,5 s de fila: pula um trecho inteiro até o motor alcançar
-// (pular pedacinho sim, pedacinho não picota as palavras e o reconhecimento se perde).
-const FILA_MAX = 1.5, FILA_VOLTA = 0.3;
+// texto fica cada vez mais para trás.
+// 1) Silêncio: depois de ~0,6 s calado o resto do silêncio não é mandado. Isso poupa o tablet e deixa a fila
+//    esvaziar nas pausas. Ao parar de mandar, pede ao motor para fechar a frase: sem mais áudio ele segura a
+//    última palavra (era assim que o "volta" dito depois de uma pausa demorava ou se perdia). Os últimos
+//    ~0,25 s ficam guardados e vão junto quando a fala volta, para não cortar o começo da palavra.
+// 2) Com fila, o silêncio é o primeiro a ser pulado.
+// 3) Só se a fila passar de 1,5 s pula também a fala, um trecho inteiro até o motor alcançar (pular pedacinho
+//    sim, pedacinho não picota as palavras e o reconhecimento se perde).
+const FILA_MAX = 1.5, FILA_VOLTA = 0.3, FILA_SILENCIO = 0.5, CALADO_MAX = 0.6;
 let vEnv = 0, vResp = 0, vDescartados = 0, atrasoVoz = 0.4, pulando = false, avisouLento = false;
+let piso = 0.004, calado = 0, guardaSil = [], falaAberta = false;
+let diag = null;
+function novoDiag() { diag = { inicio: Date.now(), audio: 0, poupado: 0, perdido: 0, somaAtraso: 0, nAtraso: 0, maxAtraso: 0 }; }
+function energia(x) { let s = 0; for (let i = 0; i < x.length; i += 2) s += x[i] * x[i]; return Math.sqrt(s / Math.ceil(x.length / 2)); }
 function enviarAudio(rec, pedaco) {
-  const fila = (vEnv - vResp) * (pedaco.length / TAXA);
+  const dur = pedaco.length / TAXA;
+  const e = energia(pedaco);
+  const fala = e > Math.max(0.0015, piso * 4);
+  // piso = ruído de fundo: desce rápido, sobe devagar (e quase nada durante a fala)
+  piso = e < piso ? piso * 0.7 + e * 0.3 : fala ? piso * 0.9995 + e * 0.0005 : piso * 0.99 + e * 0.01;
+  calado = fala ? 0 : calado + dur;
+  if (diag) diag.audio += dur;
+  const fila = (vEnv - vResp) * dur;
+  if (!fala && (calado > CALADO_MAX || fila > FILA_SILENCIO)) {
+    guardaSil.push(pedaco); if (guardaSil.length > 3) guardaSil.shift();
+    if (diag) diag.poupado += dur;
+    if (falaAberta) { falaAberta = false; vEnv++; try { rec.retrieveFinalResult(); } catch (_) { vEnv--; } }
+    return;
+  }
+  if (fala) falaAberta = true;
+  if (fala && guardaSil.length) { const g = guardaSil; guardaSil = []; for (const p of g) mandar(rec, p); }
+  mandar(rec, pedaco);
+}
+function mandar(rec, pedaco) {
+  const dur = pedaco.length / TAXA;
+  const fila = (vEnv - vResp) * dur;
   atrasoVoz = 0.35 + Math.max(0, fila); // ~0,35 s é o atraso próprio do reconhecimento
+  if (diag) { diag.somaAtraso += atrasoVoz; diag.nAtraso++; if (atrasoVoz > diag.maxAtraso) diag.maxAtraso = atrasoVoz; }
   if (!pulando && fila > FILA_MAX) pulando = true;
   else if (pulando && fila < FILA_VOLTA) pulando = false;
   if (pulando) {
     vDescartados++;
-    if (!avisouLento && !cfg.vozLeve) { avisouLento = true; mostrarAviso('Tablet no limite: ligue a "Voz leve" na tela inicial', 4000); }
+    if (diag) diag.perdido += dur;
+    if (!avisouLento) { avisouLento = true; mostrarAviso('Tablet no limite: feche outros apps', 4000); }
     return;
   }
   vEnv++;
   try { rec.acceptWaveformFloat(pedaco, TAXA); } catch (_) { vEnv--; }
 }
+function salvarDiag() {
+  if (!diag || diag.audio < 20) return;
+  const d = { data: diag.inicio, minutos: diag.audio / 60, atrasoMedio: diag.nAtraso ? diag.somaAtraso / diag.nAtraso : 0,
+    atrasoMax: diag.maxAtraso, perdido: diag.perdido, poupadoPct: (100 * diag.poupado) / diag.audio, leve: !!cfg.vozLeve };
+  try { localStorage.setItem('tp-diag', JSON.stringify(d)); } catch (_) {}
+  diag = null;
+}
+// vParcial = a frase que o motor está ouvindo agora; vFinais = o fim das frases anteriores
 function ouvirVosk() {
-  const lista = vFinais.concat(vParcial).slice(vDescartar);
+  const corte = comandosNaFrase(vParcial);
+  const lista = corte ? vParcial.slice(corte) : vFinais.concat(vParcial);
   $('ouvido').textContent = lista.slice(-8).join(' ') + `  · ${atrasoVoz.toFixed(1)} s${vDescartados ? ' ⚠' : ''}`;
-  const r = processarOuvido(lista);
-  if (r.comando) vDescartar += r.cortarAte;
+  processarOuvido(lista);
+}
+function fraseFinal(frase) {
+  const corte = comandosNaFrase(frase);
+  vFinais = (corte ? frase.slice(corte) : vFinais.concat(frase)).slice(-30);
+  vParcial = []; decisoesVolta = [];
+  $('ouvido').textContent = vFinais.slice(-8).join(' ') + `  · ${atrasoVoz.toFixed(1)} s${vDescartados ? ' ⚠' : ''}`;
+  processarOuvido(vFinais);
 }
 
 async function iniciarVoz() {
   const sessao = ++vSessao;
-  vFinais = []; vParcial = []; vDescartar = 0; voltaDoTextoAte = -1;
+  vFinais = []; vParcial = []; decisoesVolta = []; leuDesdeVolta = true;
   // o áudio precisa nascer no toque; o resto pode esperar
   try { vCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) { semVoz('Este aparelho não abriu o áudio'); return; }
   try {
@@ -443,14 +539,11 @@ async function iniciarVoz() {
   try { modelo = await carregarVoz(); } catch (e) { if (sessao === vSessao) semVoz('A voz não carregou (' + vErro + ')'); return; }
   if (sessao !== vSessao || !rodando || modo !== 'voz') return;
   const rec = criarReconhecedor(modelo, TAXA);
-  vRec = rec; vEnv = 0; vResp = 0; vDescartados = 0; atrasoVoz = 0.4; pulando = false;
+  vRec = rec; vEnv = 0; vResp = 0; vDescartados = 0; atrasoVoz = 0.4; pulando = false; calado = 0; guardaSil = []; falaAberta = false; piso = 0.004; avisouLento = false; novoDiag();
   rec.on('result', (m) => {
     vResp++;
     if (rec !== vRec) return;
-    const t = (m.result && m.result.text) || '';
-    if (t) vFinais = vFinais.concat(tokens(t));
-    vParcial = [];
-    ouvirVosk();
+    fraseFinal(tokens((m.result && m.result.text) || ''));
   });
   rec.on('partialresult', (m) => {
     vResp++;
@@ -469,6 +562,7 @@ async function iniciarVoz() {
 }
 function pararVoz() {
   vSessao++;
+  salvarDiag();
   if (vNode) { try { vNode.onaudioprocess = null; vNode.disconnect(); } catch (_) {} vNode = null; }
   if (vRec) { const r = vRec; vRec = null; try { r.remove(); } catch (_) {} }
   if (vStream) { vStream.getTracks().forEach((t) => t.stop()); vStream = null; }
@@ -510,6 +604,7 @@ function comecar(m) {
 function parar() {
   rodando = false; pararVoz(); document.body.classList.remove('gravando');
   $('b-play').textContent = '▶ Continuar'; status('pausado');
+  estado();
 }
 $('semvoz-tentar').onclick = () => { $('semvoz').style.display = 'none'; comecar('voz'); };
 $('semvoz-auto').onclick = () => { $('semvoz').style.display = 'none'; $('tela-inicio').style.display = 'none'; comecar('auto'); };
@@ -714,10 +809,19 @@ let swPronto = false;
 function estado() {
   const linhas = [];
   if (PACOTE) linhas.push(`<span class="ok">✓ ${PACOTE.roteiros.length} roteiros guardados (versão de ${brData(PACOTE.atualizado)})</span>`);
-  if (vModelo) linhas.push('<span class="ok">✓ Voz pronta, funciona sem internet</span>');
+  if (vModelo && vReserva) linhas.push('<span class="alerta">✓ Voz pronta, mas na versão antiga: abra o app com internet e espere uns minutos para baixar a nova (mais leve)</span>');
+  else if (vModelo) linhas.push('<span class="ok">✓ Voz pronta, funciona sem internet</span>');
   else if (vErro) linhas.push(`<span class="alerta">⚠ Voz: ${vErro}</span>`);
   else if (vCarregando) linhas.push('<span>⏳ Preparando a voz… (na primeira vez baixa uns 30 MB; deixe o app aberto)</span>');
   if (swPronto) linhas.push('<span class="ok">✓ App guardado no aparelho</span>');
+  try {
+    const d = JSON.parse(localStorage.getItem('tp-diag') || 'null');
+    if (d) {
+      const n = (x) => x.toFixed(1).replace('.', ',');
+      const perda = d.perdido > 0.5 ? `, <b>o tablet não deu conta em ${n(d.perdido)} s de fala</b>` : ', nada perdido';
+      linhas.push(`<span${d.perdido > 0.5 ? ' class="alerta"' : ''}>Última gravação com voz (${n(d.minutos)} min): atraso médio ${n(d.atrasoMedio)} s, máximo ${n(d.atrasoMax)} s${perda}</span>`);
+    }
+  } catch (_) {}
   linhas.push(navigator.onLine ? '<span>Com internet</span>' : '<span class="alerta">Sem internet: usando o que está guardado</span>');
   $('estado').innerHTML = linhas.join('');
 }

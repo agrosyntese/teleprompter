@@ -1,7 +1,7 @@
 // Guarda o app no aparelho para funcionar sem internet.
 // Página e roteiros: tenta a internet primeiro (para pegar o que é novo) e cai no guardado se não houver sinal.
 // Motor e modelo de voz: usa o guardado (não mudam; versão nova = nome de arquivo novo).
-const CACHE = 'tp-app-v1';
+const CACHE = 'tp-app-v2';
 const BASE = ['./', 'index.html', 'vosk-0.0.8.js', 'manifest.webmanifest', 'icone-192.png', 'icone-512.png', 'roteiros.dat'];
 const SEMPRE_NOVO = /(\/|index\.html|roteiros\.dat|manifest\.webmanifest)$/;
 const ESPERA_REDE = 4000; // sinal fraco na roça: depois de 4 s usa o guardado
@@ -52,6 +52,7 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.includes('/modelo/')) return; // o motor de voz guarda o modelo sozinho; aqui seria cópia dobrada
   if (req.mode === 'navigate' || SEMPRE_NOVO.test(url.pathname)) e.respondWith(redePrimeiro(req));
   else e.respondWith(guardadoPrimeiro(req));
 });
