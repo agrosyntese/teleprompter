@@ -328,7 +328,8 @@ function processarOuvido(lista) {
 }
 
 // ---------- voz offline (Vosk) ----------
-const MODELO_URL = 'modelo/vosk-pt-small-0.3.tar.gz';
+// endereço completo: o motor roda num "worker" que não sabe em que pasta o app está (no GitHub é /teleprompter/)
+const MODELO_URL = new URL('modelo/vosk-pt-small-0.3.tar.gz', location.href).href;
 // números falados por extenso que não aparecem escritos no roteiro ("2025", "30%")
 const NUMEROS = 'zero um uma dois duas três quatro cinco seis sete oito nove dez onze doze treze quatorze catorze quinze dezesseis dezessete dezoito dezenove vinte trinta quarenta cinquenta sessenta setenta oitenta noventa cem cento duzentos trezentos quatrocentos quinhentos seiscentos setecentos oitocentos novecentos mil milhão milhões bilhão bilhões e por vírgula meio meia'.split(' ');
 let vModelo = null, vCarregando = null, vErro = '';
